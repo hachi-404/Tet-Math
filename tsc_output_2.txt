@@ -1,0 +1,20 @@
+components/ProfileSettings.tsx(15,34): error TS2339: Property 'username' does not exist on type 'never'.
+components/ProfileSettings.tsx(16,38): error TS2339: Property 'username' does not exist on type 'never'.
+lib/profile.ts(24,10): error TS2769: No overload matches this call.
+  Overload 1 of 2, '(values: never, options?: { onConflict?: string; ignoreDuplicates?: boolean; count?: "exact" | "planned" | "estimated"; }): PostgrestFilterBuilder<{ PostgrestVersion: "12"; }, never, never, null, "profiles", never, "POST">', gave the following error.
+    Argument of type '{ id: string; username: string; updated_at: string; }' is not assignable to parameter of type 'never'.
+  Overload 2 of 2, '(values: never[], options?: { onConflict?: string; ignoreDuplicates?: boolean; count?: "exact" | "planned" | "estimated"; defaultToNull?: boolean; }): PostgrestFilterBuilder<{ PostgrestVersion: "12"; }, never, ... 4 more ..., "POST">', gave the following error.
+    Object literal may only specify known properties, and 'id' does not exist in type 'never[]'.
+lib/scores.ts(18,10): error TS2769: No overload matches this call.
+  Overload 1 of 2, '(values: never, options?: { count?: "exact" | "planned" | "estimated"; }): PostgrestFilterBuilder<{ PostgrestVersion: "12"; }, never, never, null, "scores", never, "POST">', gave the following error.
+    Argument of type '{ user_id: string; score: number; }[]' is not assignable to parameter of type 'never'.
+  Overload 2 of 2, '(values: never[], options?: { count?: "exact" | "planned" | "estimated"; defaultToNull?: boolean; }): PostgrestFilterBuilder<{ PostgrestVersion: "12"; }, never, never, null, "scores", never, "POST">', gave the following error.
+    Type '{ user_id: string; score: number; }' is not assignable to type 'never'.
+lib/scores.ts(64,62): error TS2339: Property 'user_id' does not exist on type 'never'.
+lib/scores.ts(81,19): error TS2339: Property 'username' does not exist on type 'never'.
+lib/scores.ts(81,42): error TS2339: Property 'id' does not exist on type 'never'.
+lib/scores.ts(81,50): error TS2339: Property 'username' does not exist on type 'never'.
+lib/scores.ts(87,18): error TS2339: Property 'score' does not exist on type 'never'.
+lib/scores.ts(88,23): error TS2339: Property 'created_at' does not exist on type 'never'.
+lib/scores.ts(89,21): error TS2339: Property 'username' does not exist on type 'never'.
+lib/scores.ts(91,36): error TS2339: Property 'user_id' does not exist on type 'never'.

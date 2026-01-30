@@ -5,6 +5,7 @@ import { useAuth } from './contexts/AuthContext';
 import { saveScore } from './lib/scores';
 import { AuthForm } from './components/AuthForm';
 import { Leaderboard } from './components/Leaderboard';
+import { ProfileSettings } from './components/ProfileSettings';
 
 // Helper to generate random block value 1-9
 const getRandomValue = () => Math.floor(Math.random() * 9) + 1;
@@ -493,7 +494,10 @@ const App: React.FC = () => {
 
             <div className="mt-8">
               {user ? (
-                <div className="text-sm text-gray-400">Logged in as <span className="text-white">{user.email}</span></div>
+                <div className="flex flex-col items-center gap-4">
+                  <div className="text-sm text-gray-400">Logged in as <span className="text-white">{user.email}</span></div>
+                  <ProfileSettings />
+                </div>
               ) : (
                 <div className="text-sm text-gray-500">Play to unlock Global Network</div>
               )}
@@ -544,7 +548,7 @@ const App: React.FC = () => {
             </button>
 
             <div className="mt-4">
-              <Leaderboard />
+              <Leaderboard key={isScoreSaved ? 'saved' : 'unsaved'} />
             </div>
           </div>
         </div>

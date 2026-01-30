@@ -1,14 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { fetchLeaderboard } from '../lib/scores';
-
-interface ScoreEntry {
-    score: number;
-    username: string | null;
-    created_at: string;
-}
+import { fetchLeaderboard, LeaderboardEntry } from '../lib/scores';
 
 export const Leaderboard: React.FC = () => {
-    const [scores, setScores] = useState<ScoreEntry[]>([]);
+    const [scores, setScores] = useState<LeaderboardEntry[]>([]);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
@@ -35,21 +29,24 @@ export const Leaderboard: React.FC = () => {
                 {scores.length === 0 ? (
                     <div className="text-gray-500 text-center text-sm">NO DATA DETECTED</div>
                 ) : (
-                    scores.map((entry, index) => (
-                        <div key={index} className="flex justify-between items-center text-sm">
-                            <div className="flex items-center gap-3">
-                                <span className={`font-bold w-6 ${index === 0 ? 'text-yellow-400' : index === 1 ? 'text-emerald-400' : index === 2 ? 'text-fuchsia-400' : 'text-gray-500'}`}>
-                                    #{index + 1}
-                                </span>
-                                <span className="text-gray-300 truncate max-w-[120px]">
-                                    {entry.username || 'ANONYMOUS'}
-                                </span>
+                    scores.map((entry, index) => {
+                        const name = entry.profiles?.username || entry.username || `USER-${index + 100}`;
+                        return (
+                            <div key={index} className="flex justify-between items-center text-sm">
+                                <div className="flex items-center gap-3">
+                                    <span className={`font-bold w-6 ${index === 0 ? 'text-yellow-400' : index === 1 ? 'text-emerald-400' : index === 2 ? 'text-fuchsia-400' : 'text-gray-500'}`}>
+                                        #{index + 1}
+                                    </span>
+                                    <span className="text-gray-300 truncate max-w-[120px] uppercase">
+                                        {name}
+                                    </span>
+                                </div>
+                                <div className="font-mono font-bold text-white">
+                                    {entry.score.toLocaleString()}
+                                </div>
                             </div>
-                            <div className="font-mono font-bold text-white">
-                                {entry.score.toLocaleString()}
-                            </div>
-                        </div>
-                    ))
+                        );
+                    })
                 )}
             </div>
         </div>
