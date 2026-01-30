@@ -43,6 +43,115 @@ const App: React.FC = () => {
   const flashRef = useRef<boolean>(false);
 
   // -- Input --
+  // Refactor logic into stable functions for both connection approaches
+  const getNextValidLane = (current: number, direction: number) => {
+    let next = current + direction;
+    const val = currentBlockRef.current?.value || 1;
+
+    while (next >= 0 && next < LANE_COUNT) {
+      const lane = LANE_CONFIG[next];
+      // Check validity
+      const isDiv = lane.type === LaneType.DIV;
+      const isDivisible = energyRef.current % val === 0;
+
+      if (!isDiv || (isDiv && isDivisible)) {
+        return next; // Found valid lane
+      }
+      next += direction; // Skip and continue
+    }
+    return current; // No valid lane found, stay
+  };
+
+  const moveBlock = (direction: -1 | 1) => {
+    if (!currentBlockRef.current || gameStateRef.current === GameState.PAUSED) return;
+
+    currentBlockRef.current = {
+      ...currentBlockRef.current,
+      laneIndex: getNextValidLane(currentBlockRef.current.laneIndex, direction)
+    };
+    setCurrentBlock(currentBlockRef.current);
+  };
+
+  const hardDrop = () => {
+    if (!currentBlockRef.current || gameStateRef.current === GameState.PAUSED) return;
+
+    currentBlockRef.current = {
+      ...currentBlockRef.current,
+      y: 90 // Instant drop
+    };
+    setCurrentBlock(currentBlockRef.current);
+  };
+
+  const laneLongPressTimerRef = useRef<number | null>(null);
+
+  const handleLaneTouchStart = (e: React.TouchEvent | React.MouseEvent, targetLaneIndex: number) => {
+    e.preventDefault(); // Prevent ghost clicks
+    if (gameStateRef.current !== GameState.PLAYING) return;
+    if (!currentBlockRef.current) return;
+
+    // 1. Setup Long Press (Hard Drop)
+    laneLongPressTimerRef.current = window.setTimeout(() => {
+      hardDrop();
+      laneLongPressTimerRef.current = null; // Mark as fired
+    }, 400); // 400ms for long press
+
+    // 2. Handle Move (Tap)
+    // We move immediately on touch start for responsiveness.
+    // If it turns into a long press later, the move has already happened, which is usually fine UX.
+    // Or we could wait until TouchEnd to decide between Tap vs Long Press, but that feels laggy.
+    // Let's Move immediately.
+
+    const currentLane = currentBlockRef.current.laneIndex;
+    if (currentLane === targetLaneIndex) return;
+
+    const direction = targetLaneIndex > currentLane ? 1 : -1;
+    let tempLane = currentLane;
+
+    // Move continuously until target reached or invalid
+    // We use a small interval to animate/slide effectively if we wanted, 
+    // but for now, let's just do it sequentially instant or via a quick loop
+    const moveStep = () => {
+      if (!currentBlockRef.current) return;
+      if (currentBlockRef.current.laneIndex === targetLaneIndex) return;
+
+      // Logic check before moving
+      const nextLane = getNextValidLane(currentBlockRef.current.laneIndex, direction);
+
+      // If we are stuck (can't move further), stop
+      if (nextLane === currentBlockRef.current.laneIndex) return;
+
+      // Update Ref
+      currentBlockRef.current = {
+        ...currentBlockRef.current,
+        laneIndex: nextLane
+      };
+      setCurrentBlock(currentBlockRef.current);
+
+      // Continue if not there yet
+      if (currentBlockRef.current.laneIndex !== targetLaneIndex) {
+        // Check if we passed it? (Shouldn't happen with single steps)
+        // Safety breakout
+        if ((direction === 1 && currentBlockRef.current.laneIndex > targetLaneIndex) ||
+          (direction === -1 && currentBlockRef.current.laneIndex < targetLaneIndex)) return;
+
+        setTimeout(moveStep, 50); // 50ms delay between steps for "slide" feel
+      }
+    };
+
+    moveStep();
+  };
+
+  const handleLaneTouchEnd = (e: React.TouchEvent | React.MouseEvent) => {
+    e.preventDefault();
+    // Cancel Long Press if it hasn't fired yet
+    if (laneLongPressTimerRef.current) {
+      clearTimeout(laneLongPressTimerRef.current);
+      laneLongPressTimerRef.current = null;
+    }
+    isFastDropping.current = false;
+  };
+
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Allow typing in auth forms when game is over
@@ -73,48 +182,18 @@ const App: React.FC = () => {
 
       if (!currentBlockRef.current) return;
 
-      const getNextValidLane = (current: number, direction: number) => {
-        let next = current + direction;
-        const val = currentBlockRef.current?.value || 1;
-
-        while (next >= 0 && next < LANE_COUNT) {
-          const lane = LANE_CONFIG[next];
-          // Check validity
-          const isDiv = lane.type === LaneType.DIV;
-          const isDivisible = energyRef.current % val === 0;
-
-          if (!isDiv || (isDiv && isDivisible)) {
-            return next; // Found valid lane
-          }
-          next += direction; // Skip and continue
-        }
-        return current; // No valid lane found, stay
-      };
-
       switch (e.key) {
         case 'ArrowLeft':
-          currentBlockRef.current = {
-            ...currentBlockRef.current,
-            laneIndex: getNextValidLane(currentBlockRef.current.laneIndex, -1)
-          };
-          setCurrentBlock(currentBlockRef.current);
+          moveBlock(-1);
           break;
         case 'ArrowRight':
-          currentBlockRef.current = {
-            ...currentBlockRef.current,
-            laneIndex: getNextValidLane(currentBlockRef.current.laneIndex, 1)
-          };
-          setCurrentBlock(currentBlockRef.current);
+          moveBlock(1);
           break;
         case 'ArrowDown':
           isFastDropping.current = true;
           break;
         case 'Enter':
-          currentBlockRef.current = {
-            ...currentBlockRef.current,
-            y: 90 // Instant drop to bottom
-          };
-          setCurrentBlock(currentBlockRef.current);
+          hardDrop();
           break;
       }
     };
@@ -363,7 +442,9 @@ const App: React.FC = () => {
 
   // -- Render --
   return (
-    <div className={`relative w-full h-screen overflow-hidden flex items-center justify-center bg-black transition-colors duration-100 ${shakeRef.current ? 'animate-shake' : ''}`}>
+    <div
+      className={`relative w-full h-screen overflow-hidden flex items-center justify-center bg-black transition-colors duration-100 ${shakeRef.current ? 'animate-shake' : ''}`}
+    >
 
       {/* Flash Overlay */}
       <div className={`absolute inset-0 z-40 bg-white pointer-events-none transition-opacity duration-100 ${flashRef.current ? 'opacity-20' : 'opacity-0'}`}></div>
@@ -419,7 +500,11 @@ const App: React.FC = () => {
                 return (
                   <div
                     key={idx}
-                    className={`flex-1 flex flex-col items-center justify-center border-r-2 last:border-r-0 border-white/20 transition-all duration-100 ${isActive ? 'bg-white/5' : ''}`}
+                    className={`flex-1 flex flex-col items-center justify-center border-r-2 last:border-r-0 border-white/20 transition-all duration-100 touch-action-none ${isActive ? 'bg-white/5' : ''}`}
+                    onTouchStart={(e) => handleLaneTouchStart(e, idx)}
+                    onTouchEnd={handleLaneTouchEnd}
+                    onMouseDown={(e) => handleLaneTouchStart(e, idx)}
+                    onMouseUp={handleLaneTouchEnd}
                   >
                     <span className={`text-2xl md:text-6xl font-bold ${isActive ? lane.color : 'text-gray-700'} ${isActive ? lane.glow : ''}`}>
                       {lane.type}
