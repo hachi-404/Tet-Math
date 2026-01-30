@@ -83,11 +83,28 @@ const App: React.FC = () => {
   };
 
   const laneLongPressTimerRef = useRef<number | null>(null);
+  const lastTapTimeRef = useRef<number>(0);
+  const lastTapLaneRef = useRef<number | null>(null);
 
   const handleLaneTouchStart = (e: React.TouchEvent | React.MouseEvent, targetLaneIndex: number) => {
     e.preventDefault(); // Prevent ghost clicks
     if (gameStateRef.current !== GameState.PLAYING) return;
     if (!currentBlockRef.current) return;
+
+    const now = Date.now();
+    const isDoubleTap =
+      lastTapLaneRef.current === targetLaneIndex &&
+      (now - lastTapTimeRef.current) < 300;
+
+    if (isDoubleTap) {
+      hardDrop();
+      lastTapTimeRef.current = 0; // Reset to avoid triple-tap triggering another
+      lastTapLaneRef.current = null;
+      return;
+    }
+
+    lastTapTimeRef.current = now;
+    lastTapLaneRef.current = targetLaneIndex;
 
     // 1. Setup Long Press (Hard Drop)
     laneLongPressTimerRef.current = window.setTimeout(() => {
