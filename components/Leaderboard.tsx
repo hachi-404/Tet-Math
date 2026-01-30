@@ -22,8 +22,8 @@ export const Leaderboard: React.FC = () => {
     }
 
     return (
-        <div className="w-full max-w-sm mt-8 p-6 bg-black/80 border border-white/20 backdrop-blur-md">
-            <h3 className="text-xl font-bold text-white mb-4 tracking-widest text-center border-b border-white/20 pb-2">TOP SIGNALS</h3>
+        <div className="w-full max-w-sm mt-4 md:mt-8 p-4 md:p-6 bg-black/80 border border-white/20 backdrop-blur-md">
+            <h3 className="text-lg md:text-xl font-bold text-white mb-4 tracking-widest text-center border-b border-white/20 pb-2">TOP SIGNALS</h3>
 
             <div className="space-y-2">
                 {scores.length === 0 ? (
