@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { supabase } from '../lib/supabase';
 
-export const AuthForm: React.FC = () => {
+const AuthFormComponent: React.FC = () => {
     const [loading, setLoading] = useState(false);
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
@@ -86,3 +86,5 @@ export const AuthForm: React.FC = () => {
         </div>
     );
 };
+
+export const AuthForm = React.memo(AuthFormComponent);

@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { fetchLeaderboard, LeaderboardEntry } from '../lib/scores';
 
-export const Leaderboard: React.FC = () => {
+const LeaderboardComponent: React.FC = () => {
     const [scores, setScores] = useState<LeaderboardEntry[]>([]);
     const [loading, setLoading] = useState(true);
 
@@ -52,3 +52,5 @@ export const Leaderboard: React.FC = () => {
         </div>
     );
 };
+
+export const Leaderboard = React.memo(LeaderboardComponent);

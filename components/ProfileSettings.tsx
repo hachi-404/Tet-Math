@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { getProfile, updateProfile } from '../lib/profile';
 
-export const ProfileSettings: React.FC = () => {
+const ProfileSettingsComponent: React.FC = () => {
     const { user } = useAuth();
     const [username, setUsername] = useState('');
     const [loading, setLoading] = useState(true);
@@ -74,3 +74,5 @@ export const ProfileSettings: React.FC = () => {
         </div>
     );
 };
+
+export const ProfileSettings = React.memo(ProfileSettingsComponent);
