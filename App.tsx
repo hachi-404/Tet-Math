@@ -1,342 +1,17 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { GameState, LaneType, Block, Particle, LANE_CONFIG, MAX_ENERGY, GAME_DURATION, INITIAL_ENERGY } from './types';
 import { BASE_FALL_SPEED, FAST_FALL_SPEED, HIT_STOP_FRAMES, DANGER_THRESHOLD, LOW_ENERGY_THRESHOLD, LANE_COUNT } from './constants';
+import { useAuth } from './contexts/AuthContext';
+import { saveScore } from './lib/scores';
+import { AuthForm } from './components/AuthForm';
+import { Leaderboard } from './components/Leaderboard';
 
 // Helper to generate random block value 1-9
 const getRandomValue = () => Math.floor(Math.random() * 9) + 1;
 
 const App: React.FC = () => {
-  // -- State --
-  const [gameState, setGameState] = useState<GameState>(GameState.MENU);
-  const [energy, setEnergy] = useState(INITIAL_ENERGY);
-  const [score, setScore] = useState(0);
-  const [timeLeft, setTimeLeft] = useState(GAME_DURATION);
-  const [currentBlock, setCurrentBlock] = useState<Block | null>(null);
-  const [nextBlockValue, setNextBlockValue] = useState<number>(getRandomValue());
-  const [particles, setParticles] = useState<Particle[]>([]);
+  const { user, loading: authLoading } = useAuth();
 
-  // -- Refs for Game Loop --
-  const requestRef = useRef<number>();
-  const lastTimeRef = useRef<number>();
-  const hitStopRef = useRef<number>(0);
-  const speedRef = useRef<number>(BASE_FALL_SPEED);
-  const isFastDropping = useRef<boolean>(false);
-  const scoreRef = useRef(0);
-  const energyRef = useRef(INITIAL_ENERGY);
-  const gameOverReason = useRef<string>('');
-  const gameStateRef = useRef<GameState>(GameState.MENU);
-
-  // New Refs for Loop Stability
-  const timeLeftRef = useRef(GAME_DURATION);
-  const nextBlockValueRef = useRef(nextBlockValue);
-
-  // -- Refs for Visual Effects --
-  const shakeRef = useRef<boolean>(false);
-  const flashRef = useRef<boolean>(false);
-
-  // -- Input Handling --
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (gameStateRef.current !== GameState.PLAYING) {
-        if (e.code === 'Space' || e.code === 'Enter') {
-          startGame();
-        }
-        return;
-      }
-
-      // Note: We need to be careful with currentBlock here. 
-      // Ideally block position should also be in a ref for perfectly smooth movement,
-      // but for this simple game, state updates for lateral movement are acceptable 
-      // as long as the loop handles vertical movement.
-
-      // However, to fix the "stale closure" in event listener if we used it for logic,
-      // we rely on the fact that setState(prev => ...) is safe.
-      // But we need to know if a block exists.
-
-      // For lateral movement, we can just blindly update if prev exists.
-      switch (e.key) {
-        case 'ArrowLeft':
-          setCurrentBlock(prev => prev ? { ...prev, laneIndex: Math.max(0, prev.laneIndex - 1) } : null);
-          break;
-        case 'ArrowRight':
-          setCurrentBlock(prev => prev ? { ...prev, laneIndex: Math.min(LANE_COUNT - 1, prev.laneIndex + 1) } : null);
-          break;
-        case 'ArrowDown':
-          isFastDropping.current = true;
-          break;
-      }
-    };
-
-    const handleKeyUp = (e: KeyboardEvent) => {
-      if (e.key === 'ArrowDown') {
-        isFastDropping.current = false;
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('keyup', handleKeyUp);
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('keyup', handleKeyUp);
-    };
-  }, []); // Empty dependency array to avoid re-attaching listeners
-
-  // -- Game Logic Functions --
-
-  const startGame = () => {
-    setGameState(GameState.PLAYING);
-    gameStateRef.current = GameState.PLAYING;
-
-    setEnergy(INITIAL_ENERGY);
-    energyRef.current = INITIAL_ENERGY;
-
-    setScore(0);
-    scoreRef.current = 0;
-
-    setTimeLeft(GAME_DURATION);
-    timeLeftRef.current = GAME_DURATION;
-
-    setParticles([]);
-    gameOverReason.current = '';
-
-    // Reset Next Block
-    const firstNext = getRandomValue();
-    setNextBlockValue(firstNext);
-    nextBlockValueRef.current = firstNext;
-
-    // Spawn first block
-    spawnBlock();
-
-    lastTimeRef.current = performance.now();
-    if (requestRef.current) cancelAnimationFrame(requestRef.current);
-    requestRef.current = requestAnimationFrame(gameLoop);
-  };
-
-  const spawnBlock = () => {
-    // Use the Ref for the value to ensure we have the latest
-    const val = nextBlockValueRef.current;
-
-    setCurrentBlock({
-      id: Date.now(),
-      value: val,
-      laneIndex: Math.floor(Math.random() * LANE_COUNT),
-      y: -10 // Start slightly above
-    });
-
-    // Generate new next value
-    const nextVal = getRandomValue();
-    setNextBlockValue(nextVal);
-    nextBlockValueRef.current = nextVal;
-  };
-
-  const endGame = (reason: string) => {
-    setGameState(GameState.GAME_OVER);
-    gameStateRef.current = GameState.GAME_OVER;
-    gameOverReason.current = reason;
-    if (requestRef.current) cancelAnimationFrame(requestRef.current);
-  };
-
-  const createParticles = (x: number, y: number, color: string, count: number, text?: string) => {
-    const newParticles: Particle[] = [];
-
-    // Text popup particle
-    if (text) {
-      newParticles.push({
-        id: Math.random(),
-        x,
-        y,
-        vx: 0,
-        vy: -0.5,
-        life: 60,
-        color: '#FFF',
-        text
-      });
-    }
-
-    // Explosion particles
-    for (let i = 0; i < count; i++) {
-      const angle = Math.random() * Math.PI * 2;
-      const speed = Math.random() * 2 + 1;
-      newParticles.push({
-        id: Math.random(),
-        x,
-        y,
-        vx: Math.cos(angle) * speed,
-        vy: Math.sin(angle) * speed,
-        life: 30 + Math.random() * 20,
-        color: color
-      });
-    }
-
-    setParticles(prev => [...prev, ...newParticles]);
-  };
-
-  const processCollision = (block: Block) => {
-    const lane = LANE_CONFIG[block.laneIndex];
-    let newEnergy = energyRef.current;
-    let scoreGain = 0;
-    let effectText = "";
-
-    // Apply Juice
-    hitStopRef.current = HIT_STOP_FRAMES;
-    shakeRef.current = true;
-    setTimeout(() => { shakeRef.current = false; }, 300);
-
-    if (lane.type === LaneType.DIV) {
-      flashRef.current = true; // Flash screen on score
-      setTimeout(() => { flashRef.current = false; }, 100);
-    }
-
-    // Logic
-    switch (lane.type) {
-      case LaneType.ADD:
-        newEnergy += block.value;
-        effectText = `+${block.value} E`;
-        break;
-      case LaneType.SUB:
-        newEnergy -= block.value;
-        effectText = `-${block.value} E`;
-        break;
-      case LaneType.MUL:
-        newEnergy *= block.value;
-        effectText = `×${block.value} E`;
-        break;
-      case LaneType.DIV:
-        const prevEnergy = newEnergy;
-        newEnergy = Math.floor(newEnergy / block.value);
-        scoreGain = prevEnergy - newEnergy;
-        effectText = `+${scoreGain} PTS`;
-        break;
-    }
-
-    // Update Refs
-    energyRef.current = newEnergy;
-    setEnergy(newEnergy);
-
-    if (scoreGain > 0) {
-      scoreRef.current += scoreGain;
-      setScore(scoreRef.current);
-    }
-
-    // Particle Effects
-    const particleX = (block.laneIndex * 25) + 12.5;
-    createParticles(particleX, 90, lane.color.replace('text-', '').replace('-400', ''), 10, effectText);
-
-    // Check Game Over conditions
-    if (newEnergy > MAX_ENERGY) {
-      endGame('SYSTEM OVERLOAD');
-    } else if (newEnergy < 0) {
-      endGame('SYSTEM BLACKOUT');
-    } else {
-      spawnBlock();
-    }
-  };
-
-  const gameLoop = (time: number) => {
-    if (gameStateRef.current !== GameState.PLAYING) return;
-
-    // Calculate delta time
-    // const deltaTime = time - (lastTimeRef.current || time);
-    lastTimeRef.current = time;
-
-    // 1. Hit Stop Logic
-    if (hitStopRef.current > 0) {
-      hitStopRef.current--;
-      requestRef.current = requestAnimationFrame(gameLoop);
-      return;
-    }
-
-    // 2. Timer Logic
-    // Decrement ref
-    timeLeftRef.current -= (1 / 60);
-
-    // Sync to state occasionally or every frame? 
-    // Every frame is fine for 60fps React usually, but can optimize if needed.
-    setTimeLeft(timeLeftRef.current);
-
-    if (timeLeftRef.current <= 0) {
-      endGame('TIME EXPIRED');
-      return;
-    }
-
-    // 3. Update Particles
-    setParticles(prev => prev
-      .map(p => ({
-        ...p,
-        x: p.x + (p.vx * 0.2),
-        y: p.y + (p.vy * 0.2),
-        life: p.life - 1
-      }))
-      .filter(p => p.life > 0)
-    );
-
-    // 4. Update Block
-    setCurrentBlock(prev => {
-      if (!prev) return null;
-
-      const moveSpeed = isFastDropping.current ? FAST_FALL_SPEED : BASE_FALL_SPEED;
-      const newY = prev.y + moveSpeed;
-
-      // Collision Check (Bottom of screen)
-      if (newY >= 90) {
-        // We need to call processCollision, but we can't do it directly inside setState 
-        // if it has side effects like spawning new blocks (which calls setState).
-        // However, React batching might handle it, or we might get warnings.
-        // Better to return null here and handle collision in an effect or 
-        // just call it here and let the next render cycle handle the new block.
-
-        // Actually, processCollision calls spawnBlock which calls setCurrentBlock.
-        // Calling setState inside setState updater is generally bad.
-        // Let's use a flag or handle it outside.
-
-        // BUT, since we are in the game loop (requestAnimationFrame), 
-        // we are NOT inside a React render or effect. We are in a callback.
-        // So calling processCollision (which sets state) is fine.
-        // The problem is we are inside the setCurrentBlock updater function.
-
-        // FIX: Don't do side effects in updater.
-        return { ...prev, y: newY };
-      }
-
-      return { ...prev, y: newY };
-    });
-
-    // Check collision AFTER state update? No, we need to check current position.
-    // We can't easily check the *result* of the state update immediately.
-    // So we should check the *ref* or just check the previous value we just calculated.
-
-    // Alternative: Use a Ref for the block position entirely to avoid this, 
-    // but for now let's hack it:
-    // We can't access the "new" block state until next render.
-    // So we have to do the check based on what we *would* set.
-
-    // Let's do this:
-    // We need to access the *current* block to check collision.
-    // But `currentBlock` in the scope of `gameLoop` is stale!
-    // This is the main issue. `gameLoop` is defined once (or re-created).
-    // If we don't re-create `gameLoop` every render, `currentBlock` is forever null/initial.
-
-    // SOLUTION: Use a Ref for the current block too.
-    // But we also need it in State for rendering.
-    // So we sync Ref -> State.
-
-    // Let's fix the loop to use a Ref for the block.
-    // I'll add currentBlockRef.
-
-    requestRef.current = requestAnimationFrame(gameLoop);
-  };
-
-  // We need to fix the gameLoop above because I realized I didn't add currentBlockRef yet
-  // and the logic inside gameLoop was still relying on state setters which is tricky for collision.
-
-  // Let's re-write the component with currentBlockRef.
-
-  return <AppWithRefs />;
-};
-
-// ... Wait, I should just rewrite the App component content properly.
-
-const AppWithRefs: React.FC = () => {
   // -- State (for Rendering) --
   const [gameState, setGameState] = useState<GameState>(GameState.MENU);
   const [energy, setEnergy] = useState(INITIAL_ENERGY);
@@ -345,6 +20,8 @@ const AppWithRefs: React.FC = () => {
   const [currentBlock, setCurrentBlock] = useState<Block | null>(null);
   const [nextBlockValue, setNextBlockValue] = useState<number>(getRandomValue());
   const [particles, setParticles] = useState<Particle[]>([]);
+  const [isScoreSaved, setIsScoreSaved] = useState(false);
+  const [saveMessage, setSaveMessage] = useState('');
 
   // -- Refs (for Logic) --
   const requestRef = useRef<number>();
@@ -366,8 +43,13 @@ const AppWithRefs: React.FC = () => {
   // -- Input --
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Allow typing in auth forms when game is over
+      if (gameStateRef.current === GameState.GAME_OVER) return;
+
       if (gameStateRef.current !== GameState.PLAYING && gameStateRef.current !== GameState.PAUSED) {
-        if (e.code === 'Space' || e.code === 'Enter') startGame();
+        if ((e.code === 'Space' || e.code === 'Enter') && !authLoading) {
+          startGame();
+        }
         return;
       }
 
@@ -427,7 +109,7 @@ const AppWithRefs: React.FC = () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, []);
+  }, [authLoading]);
 
   // -- Logic --
   const startGame = () => {
@@ -445,6 +127,9 @@ const AppWithRefs: React.FC = () => {
 
     setParticles([]);
     gameOverReason.current = '';
+
+    setIsScoreSaved(false);
+    setSaveMessage('');
 
     const firstNext = getRandomValue();
     setNextBlockValue(firstNext);
@@ -479,6 +164,23 @@ const AppWithRefs: React.FC = () => {
     gameStateRef.current = GameState.GAME_OVER;
     gameOverReason.current = reason;
     if (requestRef.current) cancelAnimationFrame(requestRef.current);
+
+    // Try to save score automatically if logged in
+    handleAutoSave();
+  };
+
+  const handleAutoSave = async () => {
+    if (user && scoreRef.current > 0) {
+      setSaveMessage('SAVING SCORE...');
+      try {
+        await saveScore(scoreRef.current, user.id);
+        setIsScoreSaved(true);
+        setSaveMessage('SCORE SECURED');
+      } catch (e) {
+        console.error(e);
+        setSaveMessage('SAVE FAILED');
+      }
+    }
   };
 
   const createParticles = (x: number, y: number, color: string, count: number, text?: string) => {
@@ -542,16 +244,6 @@ const AppWithRefs: React.FC = () => {
     if (Math.abs(energyDiff) >= 50) {
       scoreGain = Math.floor(scoreGain * 1.5);
     }
-
-    // Update effect text for DIV to show correct score if multiplied? 
-    // The original code showed "+X PTS" for DIV.
-    // For ADD/MUL it showed "+X E".
-    // Maybe we should show the score gain text if there is score gain?
-    // The prompt didn't specify UI changes, but it makes sense to show the score.
-    // However, sticking to the requested logic first.
-    // Let's keep the original effect text for ADD/MUL/SUB as "E" changes, 
-    // but maybe add a separate score popup or just let the score counter update.
-    // The original code for DIV set effectText to PTS.
 
     // Update effect text for DIV to show correct score if multiplied
     if (lane.type === LaneType.DIV) {
@@ -625,6 +317,7 @@ const AppWithRefs: React.FC = () => {
 
   const isDanger = energy > DANGER_THRESHOLD || energy < 0;
 
+  // -- Render --
   return (
     <div className={`relative w-full h-screen overflow-hidden flex items-center justify-center bg-black transition-colors duration-100 ${flashRef.current ? 'bg-white invert' : ''} ${shakeRef.current ? 'animate-shake' : ''}`}>
 
@@ -651,7 +344,6 @@ const AppWithRefs: React.FC = () => {
           </div>
 
           <div className="my-8">
-            <h3 className="text-gray-500 text-sm mb-2 tracking-widest">NEXT OPERATOR</h3>
             <h3 className="text-gray-500 text-sm mb-2 tracking-widest">NEXT OPERATOR</h3>
             <div className="w-24 h-24 border-4 border-white/50 bg-black/50 flex items-center justify-center relative">
               <div className="text-5xl font-bold text-white">{nextBlockValue}</div>
@@ -734,7 +426,6 @@ const AppWithRefs: React.FC = () => {
         {/* RIGHT: ENERGY TOWER */}
         <div className="flex-1 flex flex-col justify-end py-8 pl-8 relative">
           {/* Threshold Markers */}
-          {/* Threshold Markers */}
           <div className="absolute right-full top-[20%] w-4 h-[2px] bg-red-500/50"></div>
           <div className="absolute right-full bottom-[20%] w-4 h-[2px] bg-yellow-500/50"></div>
 
@@ -796,51 +487,68 @@ const AppWithRefs: React.FC = () => {
             >
               Start
             </button>
+
+            <div className="mt-8">
+              {user ? (
+                <div className="text-sm text-gray-400">Logged in as <span className="text-white">{user.email}</span></div>
+              ) : (
+                <div className="text-sm text-gray-500">Play to unlock Global Network</div>
+              )}
+            </div>
+
+            <div className="mt-8 w-full max-w-sm mx-auto">
+              <Leaderboard />
+            </div>
+
           </div>
         </div>
       )}
 
       {/* Game Over Overlay */}
       {gameState === GameState.GAME_OVER && (
-        <div className="absolute inset-0 z-50 bg-red-900/20 flex flex-col items-center justify-center backdrop-blur-md">
-          <h2 className="text-7xl font-black text-red-500 tracking-tighter mb-4 glitch-text">FAILURE</h2>
-          <div className="text-2xl text-white mb-8 font-mono border-b border-red-500 pb-2 px-8">
+        <div className="absolute inset-0 z-50 bg-black/90 flex flex-col items-center justify-center backdrop-blur-md">
+          <h2 className="text-5xl font-bold text-red-500 mb-2 tracking-widest animate-pulse">TERMINATED</h2>
+          <div className="text-gray-400 text-xl mb-8 tracking-[0.5em] uppercase">
             REASON: {gameOverReason.current}
           </div>
 
-          <div className="flex flex-col items-center gap-2 mb-12">
-            <span className="text-gray-400 text-sm">FINAL SCORE</span>
-            <span className="text-6xl font-bold text-white glow-text">{Math.floor(score)}</span>
+          <div className="text-center mb-8">
+            <div className="text-sm text-gray-500 tracking-widest mb-1">FINAL SCORE</div>
+            <div className="text-6xl font-bold text-white glow-text">{Math.floor(score).toString().padStart(6, '0')}</div>
+            {saveMessage && <div className="text-emerald-400 mt-2 text-sm tracking-widest font-bold">{saveMessage}</div>}
           </div>
 
-          <div className="flex gap-4">
+          <div className="flex flex-col items-center gap-6">
+            {!user && !isScoreSaved && score > 0 && (
+              <div className="mb-4">
+                <div className="text-yellow-400 text-sm mb-2 text-center">LOGIN TO SECURE DATA</div>
+                <AuthForm />
+              </div>
+            )}
+
             <button
               onClick={startGame}
-              className="px-10 py-3 border border-white text-white hover:bg-white hover:text-black transition-colors uppercase tracking-widest"
+              className="px-8 py-3 bg-white text-black font-bold hover:bg-gray-200 transition-colors"
             >
-              Reboot System
+              REBOOT SYSTEM
             </button>
-            <button
-              onClick={() => {
-                setGameState(GameState.MENU);
-                gameStateRef.current = GameState.MENU;
-              }}
-              className="px-10 py-3 border border-gray-500 text-gray-400 hover:border-white hover:text-white transition-colors uppercase tracking-widest"
-            >
-              Return to Title
-            </button>
+
+            <div className="mt-4">
+              <Leaderboard />
+            </div>
           </div>
         </div>
       )}
 
-      {/* Pause Overlay */}
+      {/* Paused Overlay */}
       {gameState === GameState.PAUSED && (
-        <div className="absolute inset-0 z-50 bg-black/60 flex items-center justify-center backdrop-blur-sm">
-          <h2 className="text-6xl font-black text-white tracking-[0.5em] animate-pulse">PAUSE</h2>
+        <div className="absolute inset-0 z-50 bg-black/50 flex items-center justify-center backdrop-blur-sm">
+          <h2 className="text-4xl font-bold text-white tracking-[0.5em]">PAUSED</h2>
         </div>
       )}
+
     </div>
   );
 };
 
-export default AppWithRefs;
+export default App;
