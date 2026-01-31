@@ -82,7 +82,7 @@ const App: React.FC = () => {
     setCurrentBlock(currentBlockRef.current);
   };
 
-  const laneLongPressTimerRef = useRef<number | null>(null);
+
   const lastTapTimeRef = useRef<number>(0);
   const lastTapLaneRef = useRef<number | null>(null);
 
@@ -106,11 +106,7 @@ const App: React.FC = () => {
     lastTapTimeRef.current = now;
     lastTapLaneRef.current = targetLaneIndex;
 
-    // 1. Setup Long Press (Hard Drop)
-    laneLongPressTimerRef.current = window.setTimeout(() => {
-      hardDrop();
-      laneLongPressTimerRef.current = null; // Mark as fired
-    }, 400); // 400ms for long press
+
 
     // 2. Handle Move (Tap)
     // We move immediately on touch start for responsiveness.
@@ -160,11 +156,7 @@ const App: React.FC = () => {
 
   const handleLaneTouchEnd = (e: React.TouchEvent | React.MouseEvent) => {
     e.preventDefault();
-    // Cancel Long Press if it hasn't fired yet
-    if (laneLongPressTimerRef.current) {
-      clearTimeout(laneLongPressTimerRef.current);
-      laneLongPressTimerRef.current = null;
-    }
+
     isFastDropping.current = false;
   };
 
