@@ -603,7 +603,7 @@ const App: React.FC = () => {
         {/* CENTER: PLAY AREA & RIGHT: ENERGY TOWER WRAPPER */}
         <div className="flex-1 md:flex-[3] flex flex-row gap-4 h-full min-h-0 order-2">
           <div
-            className={`relative flex-[2] border-x-4 border-white/30 bg-black/40 backdrop-blur-sm overflow-hidden ${isDanger ? 'border-red-500/50 animate-pulse' : ''}`}
+            className={`relative flex-[6] md:flex-[2] border-x-4 border-white/30 bg-black/40 backdrop-blur-sm overflow-hidden ${isDanger ? 'border-red-500/50 animate-pulse' : ''}`}
             onTouchStart={handleSwipeTouchStart}
             onTouchMove={handleSwipeTouchMove}
             onTouchEnd={handleSwipeTouchEnd}
