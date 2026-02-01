@@ -25,6 +25,9 @@ const App: React.FC = () => {
   const [saveMessage, setSaveMessage] = useState('');
   const [showZeroBonus, setShowZeroBonus] = useState(false);
 
+  const [holdBlock, setHoldBlock] = useState<number | null>(null);
+  const [canHold, setCanHold] = useState<boolean>(true);
+
   // -- Refs (for Logic) --
   const requestRef = useRef<number>();
   const lastTimeRef = useRef<number>();
@@ -38,9 +41,14 @@ const App: React.FC = () => {
   const nextBlockValueRef = useRef(nextBlockValue);
   const currentBlockRef = useRef<Block | null>(null); // The source of truth for logic
   const gameOverReason = useRef<string>('');
+  const holdBlockRef = useRef<number | null>(null); // Ref sync for hold
+  const canHoldRef = useRef<boolean>(true); // Ref sync for canHold
 
   const shakeRef = useRef<boolean>(false);
   const flashRef = useRef<boolean>(false);
+
+  const spaceDownTimeRef = useRef<number>(0);
+  const holdTimeoutRef = useRef<any>(null);
 
   // -- Input --
   // Refactor logic into stable functions for both connection approaches
@@ -82,12 +90,64 @@ const App: React.FC = () => {
     setCurrentBlock(currentBlockRef.current);
   };
 
+  const triggerHold = () => {
+    if (gameStateRef.current !== GameState.PLAYING) return;
+    if (!canHoldRef.current || !currentBlockRef.current) return;
+
+    // Swap
+    const currentVal = currentBlockRef.current.value;
+    const held = holdBlockRef.current;
+
+    holdBlockRef.current = currentVal;
+    setHoldBlock(currentVal);
+
+    if (held === null) {
+      spawnBlock(); // Will spawn the next scheduled block
+    } else {
+      // Spawn value from Hold
+      spawnBlock(held);
+    }
+
+    // Set canHold to false until next spawn
+    canHoldRef.current = false;
+    setCanHold(false);
+  };
+
 
   const lastTapTimeRef = useRef<number>(0);
   const lastTapLaneRef = useRef<number | null>(null);
 
+  // SWIPE Logic
+  const touchStartXRef = useRef<number>(0);
+  const touchStartYRef = useRef<number>(0);
+
+  const handleSwipeTouchStart = (e: React.TouchEvent) => {
+    touchStartXRef.current = e.touches[0].clientX;
+    touchStartYRef.current = e.touches[0].clientY;
+  };
+
+  const handleSwipeTouchMove = (e: React.TouchEvent) => {
+    // We can track move, but actual logic in End is simpler for swipe
+  };
+
+  const handleSwipeTouchEnd = (e: React.TouchEvent) => {
+    const endX = e.changedTouches[0].clientX;
+    const endY = e.changedTouches[0].clientY;
+    const diffX = endX - touchStartXRef.current;
+    const diffY = endY - touchStartYRef.current;
+
+    // Threshold for Swipe
+    if (Math.abs(diffX) > 50 && Math.abs(diffY) < 50) {
+      triggerHold(); // Left or Right swipe triggers Hold
+    }
+  };
+
+
   const handleLaneTouchStart = (e: React.TouchEvent | React.MouseEvent, targetLaneIndex: number) => {
-    e.preventDefault(); // Prevent ghost clicks
+    e.stopPropagation(); // Stop propagation to prevent triggering swipe on background
+    // e.preventDefault(); // Removed to allow scroll/swipe? No, prevent default is good for game feel.
+    // If we preventDefault here, click events on parent might suffer? 
+    // Actually standard touch handling.
     if (gameStateRef.current !== GameState.PLAYING) return;
     if (!currentBlockRef.current) return;
 
@@ -109,11 +169,6 @@ const App: React.FC = () => {
 
 
     // 2. Handle Move (Tap)
-    // We move immediately on touch start for responsiveness.
-    // If it turns into a long press later, the move has already happened, which is usually fine UX.
-    // Or we could wait until TouchEnd to decide between Tap vs Long Press, but that feels laggy.
-    // Let's Move immediately.
-
     const currentLane = currentBlockRef.current.laneIndex;
     if (currentLane === targetLaneIndex) return;
 
@@ -121,8 +176,6 @@ const App: React.FC = () => {
     let tempLane = currentLane;
 
     // Move continuously until target reached or invalid
-    // We use a small interval to animate/slide effectively if we wanted, 
-    // but for now, let's just do it sequentially instant or via a quick loop
     const moveStep = () => {
       if (!currentBlockRef.current) return;
       if (currentBlockRef.current.laneIndex === targetLaneIndex) return;
@@ -142,8 +195,6 @@ const App: React.FC = () => {
 
       // Continue if not there yet
       if (currentBlockRef.current.laneIndex !== targetLaneIndex) {
-        // Check if we passed it? (Shouldn't happen with single steps)
-        // Safety breakout
         if ((direction === 1 && currentBlockRef.current.laneIndex > targetLaneIndex) ||
           (direction === -1 && currentBlockRef.current.laneIndex < targetLaneIndex)) return;
 
@@ -155,8 +206,7 @@ const App: React.FC = () => {
   };
 
   const handleLaneTouchEnd = (e: React.TouchEvent | React.MouseEvent) => {
-    e.preventDefault();
-
+    // e.preventDefault();
     isFastDropping.current = false;
   };
 
@@ -166,26 +216,38 @@ const App: React.FC = () => {
       // Allow typing in auth forms when game is over
       if (gameStateRef.current === GameState.GAME_OVER) return;
 
-      if (gameStateRef.current !== GameState.PLAYING && gameStateRef.current !== GameState.PAUSED) {
-        if ((e.code === 'Space' || e.code === 'Enter') && !authLoading) {
-          startGame();
+      // Special handling for Pause/Menu shortcuts?
+      // Space is now Pause (Tap) OR Hold (Long Press)
+
+      if (e.code === 'Space') {
+        if (e.repeat) return; // Ignore auto-repeat
+
+        if (gameStateRef.current === GameState.PLAYING) {
+          spaceDownTimeRef.current = Date.now();
+          // Schedule Hold
+          holdTimeoutRef.current = setTimeout(() => {
+            triggerHold();
+            spaceDownTimeRef.current = 0; // Mark as consumed
+          }, 300);
+        } else if (gameStateRef.current === GameState.PAUSED) {
+          // Unpause immediately on Press (or Down)
+          setGameState(GameState.PLAYING);
+          gameStateRef.current = GameState.PLAYING;
+          lastTimeRef.current = performance.now();
+          requestRef.current = requestAnimationFrame(gameLoop);
+        } else {
+          // Menu -> Start
+          if (!authLoading) startGame();
         }
         return;
       }
 
-      if (e.code === 'Space') {
-        if (gameStateRef.current === GameState.PLAYING) {
-          setGameState(GameState.PAUSED);
-          gameStateRef.current = GameState.PAUSED;
-          if (requestRef.current) cancelAnimationFrame(requestRef.current);
-        } else if (gameStateRef.current === GameState.PAUSED) {
-          setGameState(GameState.PLAYING);
-          gameStateRef.current = GameState.PLAYING;
-          lastTimeRef.current = performance.now(); // Reset time to avoid jump
-          requestRef.current = requestAnimationFrame(gameLoop);
-        }
+      // Enter is Start if not playing
+      if (e.code === 'Enter' && gameStateRef.current !== GameState.PLAYING && gameStateRef.current !== GameState.PAUSED && !authLoading) {
+        startGame();
         return;
       }
+
 
       if (gameStateRef.current === GameState.PAUSED) return;
 
@@ -209,6 +271,21 @@ const App: React.FC = () => {
 
     const handleKeyUp = (e: KeyboardEvent) => {
       if (e.key === 'ArrowDown') isFastDropping.current = false;
+
+      if (e.code === 'Space') {
+        if (gameStateRef.current === GameState.PLAYING) {
+          // Clear timeout
+          if (holdTimeoutRef.current) clearTimeout(holdTimeoutRef.current);
+
+          // If spaceDownTimeRef is still set (not 0), it means Hold wasn't triggered
+          // So treat as Tap -> Pause
+          if (spaceDownTimeRef.current !== 0) {
+            setGameState(GameState.PAUSED);
+            gameStateRef.current = GameState.PAUSED;
+            if (requestRef.current) cancelAnimationFrame(requestRef.current);
+          }
+        }
+      }
     };
 
     window.addEventListener('keydown', handleKeyDown);
@@ -230,6 +307,11 @@ const App: React.FC = () => {
     setScore(0);
     scoreRef.current = 0;
 
+    setHoldBlock(null);
+    holdBlockRef.current = null;
+    setCanHold(true);
+    canHoldRef.current = true;
+
     setTimeLeft(GAME_DURATION);
     timeLeftRef.current = GAME_DURATION;
 
@@ -250,8 +332,8 @@ const App: React.FC = () => {
     requestRef.current = requestAnimationFrame(gameLoop);
   };
 
-  const spawnBlock = () => {
-    const val = nextBlockValueRef.current;
+  const spawnBlock = (forcedValue?: number) => {
+    const val = forcedValue !== undefined ? forcedValue : nextBlockValueRef.current;
 
     // Find valid start lane
     let laneIndex = Math.floor(Math.random() * LANE_COUNT);
@@ -274,9 +356,15 @@ const App: React.FC = () => {
     currentBlockRef.current = newBlock;
     setCurrentBlock(newBlock);
 
-    const nextVal = getRandomValue();
-    setNextBlockValue(nextVal);
-    nextBlockValueRef.current = nextVal;
+    // Reset Hold ability
+    setCanHold(true);
+    canHoldRef.current = true;
+
+    if (forcedValue === undefined) {
+      const nextVal = getRandomValue();
+      setNextBlockValue(nextVal);
+      nextBlockValueRef.current = nextVal;
+    }
   };
 
   const endGame = (reason: string) => {
@@ -500,7 +588,12 @@ const App: React.FC = () => {
 
         {/* CENTER: PLAY AREA & RIGHT: ENERGY TOWER WRAPPER */}
         <div className="flex-1 md:flex-[3] flex flex-row gap-4 h-full min-h-0 order-2">
-          <div className={`relative flex-[2] border-x-4 border-white/30 bg-black/40 backdrop-blur-sm overflow-hidden ${isDanger ? 'border-red-500/50 animate-pulse' : ''}`}>
+          <div
+            className={`relative flex-[2] border-x-4 border-white/30 bg-black/40 backdrop-blur-sm overflow-hidden ${isDanger ? 'border-red-500/50 animate-pulse' : ''}`}
+            onTouchStart={handleSwipeTouchStart}
+            onTouchMove={handleSwipeTouchMove}
+            onTouchEnd={handleSwipeTouchEnd}
+          >
 
             {/* Lanes Indicators (Bottom) */}
             <div className="absolute bottom-0 left-0 right-0 h-[10%] flex border-t-4 border-white/30">
@@ -566,8 +659,23 @@ const App: React.FC = () => {
 
           </div>
 
+          {/* HOLD UI - Centered between Lanes (left) and Energy (right) */}
+          <div className="flex flex-col justify-center items-center gap-2 w-16 md:w-20">
+            <div className="text-gray-500 text-[10px] md:text-sm tracking-widest font-bold">HOLD</div>
+            <div className={`w-12 h-12 md:w-16 md:h-16 border-2 border-white/30 flex items-center justify-center bg-black/50 transition-all ${canHold ? 'opacity-100' : 'opacity-50 grayscale'}`}>
+              {holdBlock ? (
+                <span className="text-2xl md:text-4xl font-bold text-white">{holdBlock}</span>
+              ) : (
+                <span className="text-gray-600 text-xs text-center px-1">EMPTY</span>
+              )}
+            </div>
+            <div className="text-[10px] text-gray-600 text-center leading-tight hidden md:block">
+              SPACE<br />(HOLD)
+            </div>
+          </div>
+
           {/* RIGHT: ENERGY TOWER */}
-          <div className="flex-1 flex flex-col justify-end py-2 md:py-8 pl-2 md:pl-8 relative">
+          <div className="flex-1 flex flex-col justify-end py-2 md:py-8 pl-0 md:pl-0 relative overflow-visible">
             {/* Threshold Markers */}
             <div className="absolute right-full top-[20%] w-4 h-[2px] bg-red-500/50"></div>
             <div className="absolute right-full bottom-[20%] w-4 h-[2px] bg-yellow-500/50"></div>
