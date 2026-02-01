@@ -640,7 +640,11 @@ const App: React.FC = () => {
               <div className="mt-8">
                 {user ? (
                   <div className="flex flex-col items-center gap-4">
-                    <div className="text-sm text-gray-400">Logged in as <span className="text-white">{user.email}</span></div>
+                    <div className="text-sm text-gray-400">
+                      Logged in as <span className="text-white">
+                        {user.user_metadata?.username || user.email}
+                      </span>
+                    </div>
                     <ProfileSettings />
                   </div>
                 ) : (
