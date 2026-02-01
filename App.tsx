@@ -116,6 +116,7 @@ const App: React.FC = () => {
 
   const lastTapTimeRef = useRef<number>(0);
   const lastTapLaneRef = useRef<number | null>(null);
+  const lastTouchTimeRef = useRef<number>(0);
 
   // SWIPE Logic
   const touchStartXRef = useRef<number>(0);
@@ -144,6 +145,20 @@ const App: React.FC = () => {
 
 
   const handleLaneTouchStart = (e: React.TouchEvent | React.MouseEvent, targetLaneIndex: number) => {
+    // Prevent ghost clicks (mouse events firing immediately after touch)
+    const now = Date.now();
+    const isTouch = 'touches' in e;
+
+    if (isTouch) {
+      lastTouchTimeRef.current = now;
+    } else {
+      // If we just had a touch event, ignore this mouse event
+      if (now - lastTouchTimeRef.current < 500) {
+        e.preventDefault();
+        return;
+      }
+    }
+
     e.stopPropagation(); // Stop propagation to prevent triggering swipe on background
     // e.preventDefault(); // Removed to allow scroll/swipe? No, prevent default is good for game feel.
     // If we preventDefault here, click events on parent might suffer? 
@@ -151,7 +166,6 @@ const App: React.FC = () => {
     if (gameStateRef.current !== GameState.PLAYING) return;
     if (!currentBlockRef.current) return;
 
-    const now = Date.now();
     const isDoubleTap =
       lastTapLaneRef.current === targetLaneIndex &&
       (now - lastTapTimeRef.current) < 300;
