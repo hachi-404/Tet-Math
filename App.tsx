@@ -24,6 +24,8 @@ const App: React.FC = () => {
   const [isScoreSaved, setIsScoreSaved] = useState(false);
   const [saveMessage, setSaveMessage] = useState('');
   const [showZeroBonus, setShowZeroBonus] = useState(false);
+  const [showOneHundredBonus, setShowOneHundredBonus] = useState(false);
+  const [showTetMathBonus, setShowTetMathBonus] = useState(false);
 
   const [holdBlock, setHoldBlock] = useState<number | null>(null);
   const [canHold, setCanHold] = useState<boolean>(true);
@@ -46,6 +48,7 @@ const App: React.FC = () => {
 
   const shakeRef = useRef<boolean>(false);
   const flashRef = useRef<boolean>(false);
+  const criticalBonusActive = useRef<boolean>(false);
 
   const spaceDownTimeRef = useRef<number>(0);
   const holdTimeoutRef = useRef<any>(null);
@@ -321,6 +324,8 @@ const App: React.FC = () => {
     setScore(0);
     scoreRef.current = 0;
 
+    criticalBonusActive.current = false;
+
     setHoldBlock(null);
     holdBlockRef.current = null;
     setCanHold(true);
@@ -463,8 +468,8 @@ const App: React.FC = () => {
     }
 
     // Apply Multiplier
-    if (Math.abs(energyDiff) >= 50) {
-      scoreGain = Math.floor(scoreGain * 1.5);
+    if ((lane.type === LaneType.MUL || lane.type === LaneType.DIV) && Math.abs(energyDiff) >= 10) {
+      scoreGain = Math.floor(scoreGain * block.value);
     }
 
     // Update effect text for DIV to show correct score if multiplied
@@ -472,19 +477,41 @@ const App: React.FC = () => {
       effectText = `+${scoreGain} PTS`;
     }
 
+    // Critical Charge (Next Div x3)
+    if (lane.type === LaneType.DIV && criticalBonusActive.current) {
+      scoreGain *= 5;
+      effectText = `CRITICAL! +${scoreGain}`;
+      criticalBonusActive.current = false; // Consumed
+    }
+
     energyRef.current = newEnergy;
     setEnergy(newEnergy);
 
     // Zero Energy Bonus
     if (newEnergy === 0) {
-      scoreGain += 500;
-      effectText = "ZERO BONUS!";
+      // scoreGain += 500; // REMOVED as per request
+      effectText = "ZERO CHARGE!";
       setShowZeroBonus(true);
       setTimeout(() => setShowZeroBonus(false), 1000);
+      criticalBonusActive.current = true; // Activate Critical Charge
 
       // Reset Energy for next block
       energyRef.current = INITIAL_ENERGY;
       setEnergy(INITIAL_ENERGY);
+    }
+
+    // One Hundred Energy Bonus
+    if (newEnergy === MAX_ENERGY) {
+      effectText = "MAX CHARGE!";
+      setShowOneHundredBonus(true);
+      setTimeout(() => setShowOneHundredBonus(false), 1000);
+      criticalBonusActive.current = true; // Activate Critical Charge
+    }
+
+    // TET MATH! Bonus (Energy Change >= 50)
+    if (Math.abs(energyDiff) >= 50) {
+      setShowTetMathBonus(true);
+      setTimeout(() => setShowTetMathBonus(false), 1000);
     }
 
     if (scoreGain > 0) {
@@ -580,6 +607,7 @@ const App: React.FC = () => {
           <div className="flex md:block flex-col items-end">
             <h3 className="text-gray-500 text-[10px] md:text-sm mb-1 tracking-widest">SCORE</h3>
             <div className="text-2xl md:text-4xl font-bold text-white tabular-nums glow-text">{Math.floor(score).toString().padStart(6, '0')}</div>
+            {criticalBonusActive.current && <div className="text-xs text-fuchsia-400 font-bold animate-pulse">CRITICAL CHARGE</div>}
           </div>
 
           <div className="my-0 md:my-8 flex md:block flex-col items-center">
@@ -842,6 +870,24 @@ const App: React.FC = () => {
         <div className="absolute top-[20%] left-0 right-0 z-50 flex justify-center pointer-events-none">
           <h2 className="text-6xl md:text-8xl font-black text-yellow-400 tracking-tighter drop-shadow-[0_0_25px_rgba(250,204,21,0.8)] animate-bounce">
             Zero!
+          </h2>
+        </div>
+      )}
+
+      {/* One Hundred Bonus Overlay */}
+      {showOneHundredBonus && (
+        <div className="absolute top-[20%] left-0 right-0 z-50 flex justify-center pointer-events-none">
+          <h2 className="text-6xl md:text-8xl font-black text-cyan-400 tracking-tighter drop-shadow-[0_0_25px_rgba(34,211,238,0.8)] animate-bounce">
+            ONE HUNDRED!
+          </h2>
+        </div>
+      )}
+
+      {/* Tet Math Bonus Overlay */}
+      {showTetMathBonus && (
+        <div className="absolute top-[10%] left-0 right-0 z-50 flex justify-center pointer-events-none">
+          <h2 className="text-6xl md:text-8xl font-black text-yellow-400 tracking-tighter drop-shadow-[0_0_25px_rgba(250,204,21,0.8)] animate-bounce">
+            TET MATH!
           </h2>
         </div>
       )}
