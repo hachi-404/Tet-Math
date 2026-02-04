@@ -300,6 +300,7 @@ const App: React.FC = () => {
             setGameState(GameState.PAUSED);
             gameStateRef.current = GameState.PAUSED;
             if (requestRef.current) cancelAnimationFrame(requestRef.current);
+            spaceDownTimeRef.current = 0; // Reset to prevent re-triggering
           }
         }
       }
