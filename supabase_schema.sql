@@ -3,7 +3,7 @@ create table scores (
   id uuid default gen_random_uuid() primary key,
   created_at timestamp with time zone default timezone('utc'::text, now()) not null,
   user_id uuid references auth.users not null,
-  score integer not null,
+  score integer not null check (score >= 0 and score <= 1000000),
   username text
 );
 
@@ -16,6 +16,8 @@ create policy "Enable read access for all users"
   using ( true );
 
 -- Policy: Allow authenticated users to insert their own scores
+create policy "Users can insert own scores"
+  on scores for insert
   with check ( auth.uid() = user_id );
 
 -- Create the profiles table
