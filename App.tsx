@@ -29,6 +29,14 @@ const App: React.FC = () => {
 
   const [holdBlock, setHoldBlock] = useState<number | null>(null);
   const [canHold, setCanHold] = useState<boolean>(true);
+  const [showHelpModal, setShowHelpModal] = useState<boolean>(() => {
+    return !localStorage.getItem('tetmath_help_seen');
+  });
+
+  const closeHelpModal = () => {
+    setShowHelpModal(false);
+    localStorage.setItem('tetmath_help_seen', '1');
+  };
 
   // -- Refs (for Logic) --
   const requestRef = useRef<number>();
@@ -585,6 +593,15 @@ const App: React.FC = () => {
       className={`relative w-full h-screen overflow-hidden flex items-center justify-center bg-black transition-colors duration-100 ${shakeRef.current ? 'animate-shake' : ''}`}
     >
 
+      {/* Help Button (Top Right) */}
+      <button
+        onClick={() => setShowHelpModal(true)}
+        className="fixed top-4 right-4 z-[60] w-10 h-10 md:w-12 md:h-12 border-2 border-white/40 bg-black/60 backdrop-blur-sm text-white font-bold text-lg md:text-xl hover:bg-white/20 hover:border-white transition-all duration-200 flex items-center justify-center"
+        aria-label="ヘルプ"
+      >
+        ?
+      </button>
+
       {/* Flash Overlay */}
       <div className={`absolute inset-0 z-40 bg-white pointer-events-none transition-opacity duration-100 ${flashRef.current ? 'opacity-20' : 'opacity-0'}`}></div>
 
@@ -890,6 +907,99 @@ const App: React.FC = () => {
           <h2 className="text-6xl md:text-8xl font-black text-yellow-400 tracking-tighter drop-shadow-[0_0_25px_rgba(250,204,21,0.8)] animate-bounce">
             TET MATH!
           </h2>
+        </div>
+      )}
+
+      {/* Help Modal */}
+      {showHelpModal && (
+        <div
+          className="fixed inset-0 z-[70] bg-black/85 backdrop-blur-md flex items-center justify-center p-4"
+          onClick={() => closeHelpModal()}
+        >
+          <div
+            className="relative w-full max-w-md max-h-[85vh] overflow-y-auto bg-black border-2 border-white/30 p-6 text-white"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Close Button */}
+            <button
+              onClick={() => closeHelpModal()}
+              className="absolute top-3 right-3 w-8 h-8 border border-white/30 text-gray-400 hover:text-white hover:border-white transition-colors flex items-center justify-center text-lg"
+            >
+              ✕
+            </button>
+
+            <h2 className="text-xl font-bold tracking-widest mb-6 text-white">ヘルプ</h2>
+
+            {/* 操作方法 */}
+            <h3 className="text-sm font-bold tracking-widest text-gray-400 mb-3 border-b border-white/20 pb-1">操作方法</h3>
+            <div className="text-sm space-y-2 mb-6">
+              <div className="grid grid-cols-3 gap-2 text-xs text-gray-500 font-bold mb-1">
+                <div>操作</div><div>PC</div><div>モバイル</div>
+              </div>
+              <div className="grid grid-cols-3 gap-2 text-sm">
+                <div className="text-gray-300">移動</div>
+                <div className="text-white">← →</div>
+                <div className="text-white">レーンタップ</div>
+              </div>
+              <div className="grid grid-cols-3 gap-2 text-sm">
+                <div className="text-gray-300">高速落下</div>
+                <div className="text-white">↓</div>
+                <div className="text-white">—</div>
+              </div>
+              <div className="grid grid-cols-3 gap-2 text-sm">
+                <div className="text-gray-300">即落下</div>
+                <div className="text-white">Enter</div>
+                <div className="text-white">ダブルタップ</div>
+              </div>
+              <div className="grid grid-cols-3 gap-2 text-sm">
+                <div className="text-gray-300">ホールド</div>
+                <div className="text-white">Space長押し</div>
+                <div className="text-white">左右スワイプ</div>
+              </div>
+              <div className="grid grid-cols-3 gap-2 text-sm">
+                <div className="text-gray-300">ポーズ</div>
+                <div className="text-white">Space短押し</div>
+                <div className="text-white">—</div>
+              </div>
+            </div>
+
+            {/* ギミック説明 */}
+            <h3 className="text-sm font-bold tracking-widest text-gray-400 mb-3 border-b border-white/20 pb-1">特殊ギミック</h3>
+            <div className="space-y-4 text-sm">
+              <div>
+                <div className="font-bold text-yellow-400 mb-1">⚡ ZERO CHARGE!</div>
+                <p className="text-gray-300 leading-relaxed">
+                  エネルギーが<span className="text-white font-bold">ちょうど0</span>で発動。エネルギーが初期値にリセットされ、次の÷操作のスコアが<span className="text-fuchsia-400 font-bold">5倍</span>になる。
+                </p>
+              </div>
+              <div>
+                <div className="font-bold text-cyan-400 mb-1">⚡ MAX CHARGE!</div>
+                <p className="text-gray-300 leading-relaxed">
+                  エネルギーが<span className="text-white font-bold">ちょうど100</span>で発動。次の÷操作のスコアが<span className="text-fuchsia-400 font-bold">5倍</span>になる。
+                </p>
+              </div>
+              <div>
+                <div className="font-bold text-yellow-400 mb-1">💥 TET MATH!</div>
+                <p className="text-gray-300 leading-relaxed">
+                  1回の操作でエネルギーが<span className="text-white font-bold">50以上</span>変動すると発動。
+                </p>
+              </div>
+              <div>
+                <div className="font-bold text-fuchsia-400 mb-1">🎯 スコア倍率</div>
+                <p className="text-gray-300 leading-relaxed">
+                  ×または÷でエネルギーが<span className="text-white font-bold">10以上</span>変動すると、使った数字がスコア倍率になる。
+                </p>
+              </div>
+            </div>
+
+            {/* Close */}
+            <button
+              onClick={() => closeHelpModal()}
+              className="w-full mt-6 py-3 border border-white/30 text-gray-300 text-sm hover:bg-white/10 hover:text-white transition-colors tracking-widest"
+            >
+              閉じる
+            </button>
+          </div>
         </div>
       )}
 
