@@ -1,18 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { GameState, LaneType, Block, Particle, LANE_CONFIG, MAX_ENERGY, GAME_DURATION, INITIAL_ENERGY } from './types';
 import { BASE_FALL_SPEED, FAST_FALL_SPEED, HIT_STOP_FRAMES, DANGER_THRESHOLD, LOW_ENERGY_THRESHOLD, LANE_COUNT } from './constants';
-import { useAuth } from './contexts/AuthContext';
-import { saveScore } from './lib/scores';
-import { AuthForm } from './components/AuthForm';
-import { Leaderboard } from './components/Leaderboard';
-import { ProfileSettings } from './components/ProfileSettings';
+import { getHighScore, saveHighScore } from './lib/highScore';
+import { HighScorePanel } from './components/HighScorePanel';
 
 // Helper to generate random block value 1-9
 const getRandomValue = () => Math.floor(Math.random() * 9) + 1;
 
 const App: React.FC = () => {
-  const { user, loading: authLoading } = useAuth();
-
   // -- State (for Rendering) --
   const [gameState, setGameState] = useState<GameState>(GameState.MENU);
   const [energy, setEnergy] = useState(INITIAL_ENERGY);
@@ -21,8 +16,9 @@ const App: React.FC = () => {
   const [currentBlock, setCurrentBlock] = useState<Block | null>(null);
   const [nextBlockValue, setNextBlockValue] = useState<number>(getRandomValue());
   const [particles, setParticles] = useState<Particle[]>([]);
-  const [isScoreSaved, setIsScoreSaved] = useState(false);
-  const [saveMessage, setSaveMessage] = useState('');
+  const [highScore, setHighScore] = useState(getHighScore);
+  const [isNewHighScore, setIsNewHighScore] = useState(false);
+  const [highScoreSaveFailed, setHighScoreSaveFailed] = useState(false);
   const [showZeroBonus, setShowZeroBonus] = useState(false);
   const [showOneHundredBonus, setShowOneHundredBonus] = useState(false);
   const [showTetMathBonus, setShowTetMathBonus] = useState(false);
@@ -238,7 +234,6 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Allow typing in auth forms when game is over
       if (gameStateRef.current === GameState.GAME_OVER) return;
 
       // Special handling for Pause/Menu shortcuts?
@@ -262,13 +257,13 @@ const App: React.FC = () => {
           requestRef.current = requestAnimationFrame(gameLoop);
         } else {
           // Menu -> Start
-          if (!authLoading) startGame();
+          startGame();
         }
         return;
       }
 
       // Enter is Start if not playing
-      if (e.code === 'Enter' && gameStateRef.current !== GameState.PLAYING && gameStateRef.current !== GameState.PAUSED && !authLoading) {
+      if (e.code === 'Enter' && gameStateRef.current !== GameState.PLAYING && gameStateRef.current !== GameState.PAUSED) {
         startGame();
         return;
       }
@@ -320,7 +315,7 @@ const App: React.FC = () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [authLoading]);
+  }, []);
 
   // -- Logic --
   const startGame = () => {
@@ -346,8 +341,8 @@ const App: React.FC = () => {
     setParticles([]);
     gameOverReason.current = '';
 
-    setIsScoreSaved(false);
-    setSaveMessage('');
+    setIsNewHighScore(false);
+    setHighScoreSaveFailed(false);
 
     const firstNext = getRandomValue();
     setNextBlockValue(firstNext);
@@ -401,22 +396,10 @@ const App: React.FC = () => {
     gameOverReason.current = reason;
     if (requestRef.current) cancelAnimationFrame(requestRef.current);
 
-    // Try to save score automatically if logged in
-    handleAutoSave();
-  };
-
-  const handleAutoSave = async () => {
-    if (user && scoreRef.current > 0) {
-      setSaveMessage('SAVING SCORE...');
-      try {
-        await saveScore(scoreRef.current, user.id);
-        setIsScoreSaved(true);
-        setSaveMessage('SCORE SECURED');
-      } catch (e) {
-        console.error(e);
-        setSaveMessage('SAVE FAILED');
-      }
-    }
+    const highScoreUpdate = saveHighScore(scoreRef.current);
+    setHighScore(highScoreUpdate.highScore);
+    setIsNewHighScore(highScoreUpdate.isNewHighScore);
+    setHighScoreSaveFailed(!highScoreUpdate.persisted);
   };
 
   const createParticles = (x: number, y: number, color: string, count: number, text?: string) => {
@@ -805,23 +788,8 @@ const App: React.FC = () => {
                 Start
               </button>
 
-              <div className="mt-8">
-                {user ? (
-                  <div className="flex flex-col items-center gap-4">
-                    <div className="text-sm text-gray-400">
-                      Logged in as <span className="text-white">
-                        {user.user_metadata?.username || user.email}
-                      </span>
-                    </div>
-                    <ProfileSettings />
-                  </div>
-                ) : (
-                  <div className="text-sm text-gray-500">Play to unlock Global Network</div>
-                )}
-              </div>
-
               <div className="mt-8 w-full max-w-sm mx-auto">
-                <Leaderboard />
+                <HighScorePanel highScore={highScore} />
               </div>
 
             </div>
@@ -841,17 +809,15 @@ const App: React.FC = () => {
             <div className="text-center mb-8">
               <div className="text-sm text-gray-500 tracking-widest mb-1">FINAL SCORE</div>
               <div className="text-6xl font-bold text-white glow-text">{Math.floor(score).toString().padStart(6, '0')}</div>
-              {saveMessage && <div className="text-emerald-400 mt-2 text-sm tracking-widest font-bold">{saveMessage}</div>}
+              {isNewHighScore && (
+                <div className="text-yellow-400 mt-2 text-sm tracking-widest font-bold animate-pulse">NEW HIGH SCORE</div>
+              )}
+              {highScoreSaveFailed && (
+                <div className="text-red-400 mt-2 text-xs tracking-widest font-bold">LOCAL SAVE FAILED</div>
+              )}
             </div>
 
             <div className="flex flex-col items-center gap-6">
-              {!user && !isScoreSaved && score > 0 && (
-                <div className="mb-4">
-                  <div className="text-yellow-400 text-sm mb-2 text-center">LOGIN TO SECURE DATA</div>
-                  <AuthForm />
-                </div>
-              )}
-
               <button
                 onClick={startGame}
                 className="px-8 py-3 bg-white text-black font-bold hover:bg-gray-200 transition-colors"
@@ -867,7 +833,7 @@ const App: React.FC = () => {
               </button>
 
               <div className="mt-4">
-                <Leaderboard key={isScoreSaved ? 'saved' : 'unsaved'} />
+                <HighScorePanel highScore={highScore} />
               </div>
             </div>
           </div>
