@@ -290,6 +290,16 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target;
+      if (
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement ||
+        (target instanceof HTMLElement && target.isContentEditable)
+      ) {
+        return;
+      }
+
       if (showHelpModalRef.current) return;
       if (gameStateRef.current === GameState.GAME_OVER) return;
 
@@ -308,19 +318,9 @@ const App: React.FC = () => {
           }, 300);
         } else if (gameStateRef.current === GameState.PAUSED) {
           resumeGame();
-        } else {
-          // Menu -> Start
-          if (!authLoading) startGame();
         }
         return;
       }
-
-      // Enter is Start if not playing
-      if (e.code === 'Enter' && gameStateRef.current !== GameState.PLAYING && gameStateRef.current !== GameState.PAUSED && !authLoading) {
-        startGame();
-        return;
-      }
-
 
       if (gameStateRef.current === GameState.PAUSED) return;
 
@@ -366,7 +366,7 @@ const App: React.FC = () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [authLoading]);
+  }, []);
 
   useEffect(() => {
     const pauseWhenHidden = () => {
