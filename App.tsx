@@ -1,13 +1,21 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { GameState, LaneType, Block, Particle, LANE_CONFIG, MAX_ENERGY, GAME_DURATION, INITIAL_ENERGY } from './types';
 import { BASE_FALL_SPEED, FAST_FALL_SPEED, HIT_STOP_FRAMES, DANGER_THRESHOLD, LOW_ENERGY_THRESHOLD, LANE_COUNT } from './constants';
-import { getHighScore, saveHighScore } from './lib/highScore';
-import { HighScorePanel } from './components/HighScorePanel';
+import { useAuth } from './contexts/AuthContext';
+import { saveBestScore } from './lib/scores';
+import { AuthForm } from './components/AuthForm';
+import { Leaderboard } from './components/Leaderboard';
+import { ProfileSettings } from './components/ProfileSettings';
 
 // Helper to generate random block value 1-9
 const getRandomValue = () => Math.floor(Math.random() * 9) + 1;
+const MAX_FRAME_DELTA_SECONDS = 0.1;
+const DOUBLE_TAP_INTERVAL_MS = 350;
+const DOUBLE_TAP_DISTANCE_PX = 32;
 
 const App: React.FC = () => {
+  const { user, loading: authLoading } = useAuth();
+
   // -- State (for Rendering) --
   const [gameState, setGameState] = useState<GameState>(GameState.MENU);
   const [energy, setEnergy] = useState(INITIAL_ENERGY);
@@ -16,9 +24,8 @@ const App: React.FC = () => {
   const [currentBlock, setCurrentBlock] = useState<Block | null>(null);
   const [nextBlockValue, setNextBlockValue] = useState<number>(getRandomValue());
   const [particles, setParticles] = useState<Particle[]>([]);
-  const [highScore, setHighScore] = useState(getHighScore);
-  const [isNewHighScore, setIsNewHighScore] = useState(false);
-  const [highScoreSaveFailed, setHighScoreSaveFailed] = useState(false);
+  const [isScoreSaved, setIsScoreSaved] = useState(false);
+  const [saveMessage, setSaveMessage] = useState('');
   const [showZeroBonus, setShowZeroBonus] = useState(false);
   const [showOneHundredBonus, setShowOneHundredBonus] = useState(false);
   const [showTetMathBonus, setShowTetMathBonus] = useState(false);
@@ -26,12 +33,21 @@ const App: React.FC = () => {
   const [holdBlock, setHoldBlock] = useState<number | null>(null);
   const [canHold, setCanHold] = useState<boolean>(true);
   const [showHelpModal, setShowHelpModal] = useState<boolean>(() => {
-    return !localStorage.getItem('tetmath_help_seen');
+    try {
+      return !localStorage.getItem('tetmath_help_seen');
+    } catch {
+      return true;
+    }
   });
 
   const closeHelpModal = () => {
+    showHelpModalRef.current = false;
     setShowHelpModal(false);
-    localStorage.setItem('tetmath_help_seen', '1');
+    try {
+      localStorage.setItem('tetmath_help_seen', '1');
+    } catch (error) {
+      console.error('Failed to save help visibility preference:', error);
+    }
   };
 
   // -- Refs (for Logic) --
@@ -41,6 +57,7 @@ const App: React.FC = () => {
   const isFastDropping = useRef<boolean>(false);
 
   const gameStateRef = useRef<GameState>(GameState.MENU);
+  const showHelpModalRef = useRef(showHelpModal);
   const energyRef = useRef(INITIAL_ENERGY);
   const scoreRef = useRef(0);
   const timeLeftRef = useRef(GAME_DURATION);
@@ -49,6 +66,8 @@ const App: React.FC = () => {
   const gameOverReason = useRef<string>('');
   const holdBlockRef = useRef<number | null>(null); // Ref sync for hold
   const canHoldRef = useRef<boolean>(true); // Ref sync for canHold
+  const gameSessionRef = useRef(0);
+  const scoreSaveInFlightRef = useRef<number | null>(null);
 
   const shakeRef = useRef<boolean>(false);
   const flashRef = useRef<boolean>(false);
@@ -123,26 +142,28 @@ const App: React.FC = () => {
 
   const lastTapTimeRef = useRef<number>(0);
   const lastTapLaneRef = useRef<number | null>(null);
-  const lastTouchTimeRef = useRef<number>(0);
+  const lastTapPositionRef = useRef({ x: 0, y: 0 });
 
-  // SWIPE Logic
-  const touchStartXRef = useRef<number>(0);
-  const touchStartYRef = useRef<number>(0);
+  // Pointer swipe logic
+  const pointerStartXRef = useRef<number>(0);
+  const pointerStartYRef = useRef<number>(0);
+  const swipePointerIdRef = useRef<number | null>(null);
 
-  const handleSwipeTouchStart = (e: React.TouchEvent) => {
-    touchStartXRef.current = e.touches[0].clientX;
-    touchStartYRef.current = e.touches[0].clientY;
+  const handleSwipePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!e.isPrimary) return;
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    swipePointerIdRef.current = e.pointerId;
+    pointerStartXRef.current = e.clientX;
+    pointerStartYRef.current = e.clientY;
   };
 
-  const handleSwipeTouchMove = (e: React.TouchEvent) => {
-    // We can track move, but actual logic in End is simpler for swipe
-  };
-
-  const handleSwipeTouchEnd = (e: React.TouchEvent) => {
-    const endX = e.changedTouches[0].clientX;
-    const endY = e.changedTouches[0].clientY;
-    const diffX = endX - touchStartXRef.current;
-    const diffY = endY - touchStartYRef.current;
+  const handleSwipePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!e.isPrimary || swipePointerIdRef.current !== e.pointerId) return;
+    e.preventDefault();
+    swipePointerIdRef.current = null;
+    const diffX = e.clientX - pointerStartXRef.current;
+    const diffY = e.clientY - pointerStartYRef.current;
 
     // Threshold for Swipe
     if (Math.abs(diffX) > 50 && Math.abs(diffY) < 50) {
@@ -150,45 +171,40 @@ const App: React.FC = () => {
     }
   };
 
-
-  const handleLaneTouchStart = (e: React.TouchEvent | React.MouseEvent, targetLaneIndex: number) => {
-    // Prevent ghost clicks (mouse events firing immediately after touch)
-    const now = Date.now();
-    const isTouch = 'touches' in e;
-
-    if (isTouch) {
-      lastTouchTimeRef.current = now;
-    } else {
-      // If we just had a touch event, ignore this mouse event
-      if (now - lastTouchTimeRef.current < 500) {
-        e.preventDefault();
-        return;
-      }
+  const handleSwipePointerCancel = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (swipePointerIdRef.current === e.pointerId) {
+      swipePointerIdRef.current = null;
     }
+  };
 
-    e.stopPropagation(); // Stop propagation to prevent triggering swipe on background
-    // e.preventDefault(); // Removed to allow scroll/swipe? No, prevent default is good for game feel.
-    // If we preventDefault here, click events on parent might suffer? 
-    // Actually standard touch handling.
+
+  const handleLanePointerDown = (e: React.PointerEvent<HTMLDivElement>, targetLaneIndex: number) => {
+    if (!e.isPrimary) return;
+    e.preventDefault();
+    e.stopPropagation();
     if (gameStateRef.current !== GameState.PLAYING) return;
     if (!currentBlockRef.current) return;
 
+    const now = e.timeStamp;
+    const tapDistance = Math.hypot(
+      e.clientX - lastTapPositionRef.current.x,
+      e.clientY - lastTapPositionRef.current.y,
+    );
     const isDoubleTap =
       lastTapLaneRef.current === targetLaneIndex &&
-      (now - lastTapTimeRef.current) < 300;
+      (now - lastTapTimeRef.current) <= DOUBLE_TAP_INTERVAL_MS &&
+      tapDistance <= DOUBLE_TAP_DISTANCE_PX;
 
     if (isDoubleTap) {
       hardDrop();
-      lastTapTimeRef.current = 0; // Reset to avoid triple-tap triggering another
+      lastTapTimeRef.current = 0;
       lastTapLaneRef.current = null;
       return;
     }
 
     lastTapTimeRef.current = now;
     lastTapLaneRef.current = targetLaneIndex;
-
-
-
+    lastTapPositionRef.current = { x: e.clientX, y: e.clientY };
     // 2. Handle Move (Tap)
     const currentLane = currentBlockRef.current.laneIndex;
     if (currentLane === targetLaneIndex) return;
@@ -226,14 +242,55 @@ const App: React.FC = () => {
     moveStep();
   };
 
-  const handleLaneTouchEnd = (e: React.TouchEvent | React.MouseEvent) => {
-    // e.preventDefault();
+  const pauseGame = () => {
+    if (gameStateRef.current !== GameState.PLAYING) return;
+
+    if (holdTimeoutRef.current) {
+      clearTimeout(holdTimeoutRef.current);
+      holdTimeoutRef.current = null;
+    }
+    spaceDownTimeRef.current = 0;
+    swipePointerIdRef.current = null;
     isFastDropping.current = false;
+    setGameState(GameState.PAUSED);
+    gameStateRef.current = GameState.PAUSED;
+    if (requestRef.current) cancelAnimationFrame(requestRef.current);
+  };
+
+  const resumeGame = () => {
+    if (gameStateRef.current !== GameState.PAUSED || showHelpModalRef.current) return;
+
+    setGameState(GameState.PLAYING);
+    gameStateRef.current = GameState.PLAYING;
+    lastTimeRef.current = performance.now();
+    requestRef.current = requestAnimationFrame(gameLoop);
+  };
+
+  const returnToMenu = () => {
+    if (requestRef.current) cancelAnimationFrame(requestRef.current);
+    if (holdTimeoutRef.current) {
+      clearTimeout(holdTimeoutRef.current);
+      holdTimeoutRef.current = null;
+    }
+    isFastDropping.current = false;
+    spaceDownTimeRef.current = 0;
+    swipePointerIdRef.current = null;
+    currentBlockRef.current = null;
+    setCurrentBlock(null);
+    setGameState(GameState.MENU);
+    gameStateRef.current = GameState.MENU;
+  };
+
+  const openHelp = () => {
+    pauseGame();
+    showHelpModalRef.current = true;
+    setShowHelpModal(true);
   };
 
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (showHelpModalRef.current) return;
       if (gameStateRef.current === GameState.GAME_OVER) return;
 
       // Special handling for Pause/Menu shortcuts?
@@ -250,20 +307,16 @@ const App: React.FC = () => {
             spaceDownTimeRef.current = 0; // Mark as consumed
           }, 300);
         } else if (gameStateRef.current === GameState.PAUSED) {
-          // Unpause immediately on Press (or Down)
-          setGameState(GameState.PLAYING);
-          gameStateRef.current = GameState.PLAYING;
-          lastTimeRef.current = performance.now();
-          requestRef.current = requestAnimationFrame(gameLoop);
+          resumeGame();
         } else {
           // Menu -> Start
-          startGame();
+          if (!authLoading) startGame();
         }
         return;
       }
 
       // Enter is Start if not playing
-      if (e.code === 'Enter' && gameStateRef.current !== GameState.PLAYING && gameStateRef.current !== GameState.PAUSED) {
+      if (e.code === 'Enter' && gameStateRef.current !== GameState.PLAYING && gameStateRef.current !== GameState.PAUSED && !authLoading) {
         startGame();
         return;
       }
@@ -300,10 +353,8 @@ const App: React.FC = () => {
           // If spaceDownTimeRef is still set (not 0), it means Hold wasn't triggered
           // So treat as Tap -> Pause
           if (spaceDownTimeRef.current !== 0) {
-            setGameState(GameState.PAUSED);
-            gameStateRef.current = GameState.PAUSED;
-            if (requestRef.current) cancelAnimationFrame(requestRef.current);
             spaceDownTimeRef.current = 0; // Reset to prevent re-triggering
+            pauseGame();
           }
         }
       }
@@ -315,10 +366,37 @@ const App: React.FC = () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
+  }, [authLoading]);
+
+  useEffect(() => {
+    const pauseWhenHidden = () => {
+      if (document.hidden) pauseGame();
+    };
+
+    document.addEventListener('visibilitychange', pauseWhenHidden);
+    window.addEventListener('pagehide', pauseGame);
+    return () => {
+      document.removeEventListener('visibilitychange', pauseWhenHidden);
+      window.removeEventListener('pagehide', pauseGame);
+    };
   }, []);
 
   // -- Logic --
   const startGame = () => {
+    if (authLoading) return;
+
+    gameSessionRef.current += 1;
+
+    if (holdTimeoutRef.current) {
+      clearTimeout(holdTimeoutRef.current);
+      holdTimeoutRef.current = null;
+    }
+    isFastDropping.current = false;
+    spaceDownTimeRef.current = 0;
+    swipePointerIdRef.current = null;
+    lastTapTimeRef.current = 0;
+    lastTapLaneRef.current = null;
+
     setGameState(GameState.PLAYING);
     gameStateRef.current = GameState.PLAYING;
 
@@ -341,8 +419,9 @@ const App: React.FC = () => {
     setParticles([]);
     gameOverReason.current = '';
 
-    setIsNewHighScore(false);
-    setHighScoreSaveFailed(false);
+    setIsScoreSaved(false);
+    setSaveMessage('');
+    scoreSaveInFlightRef.current = null;
 
     const firstNext = getRandomValue();
     setNextBlockValue(firstNext);
@@ -391,16 +470,49 @@ const App: React.FC = () => {
   };
 
   const endGame = (reason: string) => {
+    if (holdTimeoutRef.current) {
+      clearTimeout(holdTimeoutRef.current);
+      holdTimeoutRef.current = null;
+    }
+    isFastDropping.current = false;
+    spaceDownTimeRef.current = 0;
     setGameState(GameState.GAME_OVER);
     gameStateRef.current = GameState.GAME_OVER;
     gameOverReason.current = reason;
     if (requestRef.current) cancelAnimationFrame(requestRef.current);
 
-    const highScoreUpdate = saveHighScore(scoreRef.current);
-    setHighScore(highScoreUpdate.highScore);
-    setIsNewHighScore(highScoreUpdate.isNewHighScore);
-    setHighScoreSaveFailed(!highScoreUpdate.persisted);
   };
+
+  const handleAutoSave = async () => {
+    const gameSession = gameSessionRef.current;
+    if (!user || scoreRef.current <= 0 || isScoreSaved || scoreSaveInFlightRef.current === gameSession) return;
+
+    scoreSaveInFlightRef.current = gameSession;
+    setSaveMessage('SAVING BEST SCORE...');
+
+    try {
+      await saveBestScore(scoreRef.current);
+      if (gameSessionRef.current === gameSession && gameStateRef.current === GameState.GAME_OVER) {
+        setIsScoreSaved(true);
+        setSaveMessage('BEST SCORE SECURED');
+      }
+    } catch (error) {
+      console.error(error);
+      if (gameSessionRef.current === gameSession && gameStateRef.current === GameState.GAME_OVER) {
+        setSaveMessage('SAVE FAILED');
+      }
+    } finally {
+      if (scoreSaveInFlightRef.current === gameSession) {
+        scoreSaveInFlightRef.current = null;
+      }
+    }
+  };
+
+  useEffect(() => {
+    if (gameState === GameState.GAME_OVER && user && scoreRef.current > 0 && !isScoreSaved) {
+      void handleAutoSave();
+    }
+  }, [gameState, user, isScoreSaved]);
 
   const createParticles = (x: number, y: number, color: string, count: number, text?: string) => {
     const newParticles: Particle[] = [];
@@ -521,16 +633,22 @@ const App: React.FC = () => {
 
   const gameLoop = (time: number) => {
     if (gameStateRef.current !== GameState.PLAYING) return;
+    const previousTime = lastTimeRef.current ?? time;
+    const deltaSeconds = Math.min(
+      Math.max((time - previousTime) / 1000, 0),
+      MAX_FRAME_DELTA_SECONDS,
+    );
+    const frameScale = deltaSeconds * 60;
     lastTimeRef.current = time;
 
     if (hitStopRef.current > 0) {
-      hitStopRef.current--;
+      hitStopRef.current = Math.max(0, hitStopRef.current - frameScale);
       requestRef.current = requestAnimationFrame(gameLoop);
       return;
     }
 
     // Timer
-    timeLeftRef.current -= (1 / 60);
+    timeLeftRef.current -= deltaSeconds;
     setTimeLeft(timeLeftRef.current);
 
     if (timeLeftRef.current <= 0) {
@@ -540,14 +658,19 @@ const App: React.FC = () => {
 
     // Particles
     setParticles(prev => prev
-      .map(p => ({ ...p, x: p.x + (p.vx * 0.2), y: p.y + (p.vy * 0.2), life: p.life - 1 }))
+      .map(p => ({
+        ...p,
+        x: p.x + (p.vx * 0.2 * frameScale),
+        y: p.y + (p.vy * 0.2 * frameScale),
+        life: p.life - frameScale,
+      }))
       .filter(p => p.life > 0)
     );
 
     // Block Logic
     if (currentBlockRef.current) {
       const moveSpeed = isFastDropping.current ? FAST_FALL_SPEED : BASE_FALL_SPEED;
-      const newY = currentBlockRef.current.y + moveSpeed;
+      const newY = currentBlockRef.current.y + (moveSpeed * deltaSeconds);
 
       if (newY >= 90) {
         processCollision(currentBlockRef.current);
@@ -558,7 +681,9 @@ const App: React.FC = () => {
       }
     }
 
-    requestRef.current = requestAnimationFrame(gameLoop);
+    if (gameStateRef.current === GameState.PLAYING) {
+      requestRef.current = requestAnimationFrame(gameLoop);
+    }
   };
 
   // -- Render Helpers --
@@ -573,17 +698,35 @@ const App: React.FC = () => {
   // -- Render --
   return (
     <div
-      className={`relative w-full h-screen overflow-hidden flex items-center justify-center bg-black transition-colors duration-100 ${shakeRef.current ? 'animate-shake' : ''}`}
+      className={`safe-area relative w-full h-[100dvh] min-h-[100svh] overflow-hidden flex items-center justify-center bg-black transition-colors duration-100 ${shakeRef.current ? 'animate-shake' : ''}`}
     >
 
       {/* Help Button (Top Right) */}
       <button
-        onClick={() => setShowHelpModal(true)}
-        className="fixed top-4 right-4 z-[60] w-10 h-10 md:w-12 md:h-12 border-2 border-white/40 bg-black/60 backdrop-blur-sm text-white font-bold text-lg md:text-xl hover:bg-white/20 hover:border-white transition-all duration-200 flex items-center justify-center"
+        onClick={openHelp}
+        className="fixed z-[60] w-10 h-10 md:w-12 md:h-12 border-2 border-white/40 bg-black/60 backdrop-blur-sm text-white font-bold text-lg md:text-xl hover:bg-white/20 hover:border-white transition-all duration-200 flex items-center justify-center"
+        style={{
+          top: 'max(1rem, env(safe-area-inset-top))',
+          right: 'max(1rem, env(safe-area-inset-right))',
+        }}
         aria-label="ヘルプ"
       >
         ?
       </button>
+
+      {gameState === GameState.PLAYING && (
+        <button
+          onClick={pauseGame}
+          className="fixed z-[60] w-10 h-10 md:w-12 md:h-12 border-2 border-white/40 bg-black/60 backdrop-blur-sm text-white font-bold text-lg md:text-xl hover:bg-white/20 hover:border-white transition-all duration-200 flex items-center justify-center"
+          style={{
+            top: 'max(1rem, env(safe-area-inset-top))',
+            left: 'max(1rem, env(safe-area-inset-left))',
+          }}
+          aria-label="Pause game"
+        >
+          II
+        </button>
+      )}
 
       {/* Flash Overlay */}
       <div className={`absolute inset-0 z-40 bg-white pointer-events-none transition-opacity duration-100 ${flashRef.current ? 'opacity-20' : 'opacity-0'}`}></div>
@@ -601,7 +744,7 @@ const App: React.FC = () => {
       </div>
 
       {/* MAIN LAYOUT CONTAINER */}
-      <div className="relative z-10 flex flex-col md:flex-row w-full max-w-5xl h-[90vh] md:h-[80vh] gap-4 p-4">
+      <div className="relative z-10 flex flex-col md:flex-row w-full max-w-5xl h-full md:h-[80dvh] gap-4">
 
         {/* HUD */}
         <div className="flex-none md:flex-1 flex flex-row md:flex-col justify-between items-center md:items-end text-right py-2 md:py-8 w-full md:w-auto order-1">
@@ -632,10 +775,11 @@ const App: React.FC = () => {
         {/* CENTER: PLAY AREA & RIGHT: ENERGY TOWER WRAPPER */}
         <div className="flex-1 md:flex-[3] flex flex-row gap-4 h-full min-h-0 order-2">
           <div
-            className={`relative flex-[6] md:flex-[2] border-x-4 border-white/30 bg-black/40 backdrop-blur-sm overflow-hidden ${isDanger ? 'border-red-500/50 animate-pulse' : ''}`}
-            onTouchStart={handleSwipeTouchStart}
-            onTouchMove={handleSwipeTouchMove}
-            onTouchEnd={handleSwipeTouchEnd}
+            className={`relative flex-[6] md:flex-[2] touch-none border-x-4 border-white/30 bg-black/40 backdrop-blur-sm overflow-hidden ${isDanger ? 'border-red-500/50 animate-pulse' : ''}`}
+            style={{ touchAction: 'none' }}
+            onPointerDown={handleSwipePointerDown}
+            onPointerUp={handleSwipePointerUp}
+            onPointerCancel={handleSwipePointerCancel}
           >
 
             {/* Lanes Indicators (Bottom) */}
@@ -645,11 +789,10 @@ const App: React.FC = () => {
                 return (
                   <div
                     key={idx}
-                    className={`flex-1 flex flex-col items-center justify-center border-r-2 last:border-r-0 border-white/20 transition-all duration-100 touch-action-none ${isActive ? 'bg-white/5' : ''}`}
-                    onTouchStart={(e) => handleLaneTouchStart(e, idx)}
-                    onTouchEnd={handleLaneTouchEnd}
-                    onMouseDown={(e) => handleLaneTouchStart(e, idx)}
-                    onMouseUp={handleLaneTouchEnd}
+                    data-lane-index={idx}
+                    className={`flex-1 flex flex-col items-center justify-center border-r-2 last:border-r-0 border-white/20 transition-all duration-100 touch-none ${isActive ? 'bg-white/5' : ''}`}
+                    style={{ touchAction: 'none' }}
+                    onPointerDown={(e) => handleLanePointerDown(e, idx)}
                   >
                     <span className={`text-2xl md:text-6xl font-bold ${isActive ? lane.color : 'text-gray-700'} ${isActive ? lane.glow : ''}`}>
                       {lane.type}
@@ -761,7 +904,7 @@ const App: React.FC = () => {
 
       {/* Menu Overlay */}
       {gameState === GameState.MENU && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm overflow-y-auto">
+        <div className="safe-area fixed inset-0 z-50 bg-black/80 backdrop-blur-sm overflow-y-auto">
           <div className="min-h-full flex flex-col items-center justify-center py-12">
             <h1 className="text-4xl md:text-6xl font-extrabold mb-2 tracking-tighter text-white drop-shadow-[0_0_10px_rgba(255,255,255,0.8)]">
               TET <span className="text-transparent bg-clip-text bg-gradient-to-r from-white to-gray-400">MATH</span>
@@ -783,13 +926,27 @@ const App: React.FC = () => {
 
               <button
                 onClick={startGame}
-                className="px-12 py-4 bg-white text-black font-bold text-xl hover:bg-gray-200 hover:scale-105 transition-transform"
+                disabled={authLoading}
+                className="px-12 py-4 bg-white text-black font-bold text-xl hover:bg-gray-200 hover:scale-105 transition-transform disabled:opacity-50 disabled:hover:scale-100"
               >
-                Start
+                {authLoading ? 'INITIALIZING...' : 'Start'}
               </button>
 
+              <div className="mt-8">
+                {user ? (
+                  <div className="flex flex-col items-center gap-4">
+                    <div className="text-xs text-gray-400">
+                      LOGGED IN AS <span className="text-white">{user.user_metadata?.username || user.email || 'GUEST'}</span>
+                    </div>
+                    <ProfileSettings />
+                  </div>
+                ) : (
+                  <div className="text-sm text-gray-500">Play to unlock Global Network</div>
+                )}
+              </div>
+
               <div className="mt-8 w-full max-w-sm mx-auto">
-                <HighScorePanel highScore={highScore} />
+                <Leaderboard />
               </div>
 
             </div>
@@ -800,7 +957,7 @@ const App: React.FC = () => {
       {/* Game Over Overlay */}
       {
         gameState === GameState.GAME_OVER && (
-          <div className="absolute inset-0 z-50 bg-black/90 flex flex-col items-center justify-center backdrop-blur-md">
+          <div className="safe-area fixed inset-0 z-50 bg-black/90 flex flex-col items-center justify-start md:justify-center backdrop-blur-md overflow-y-auto">
             <h2 className="text-5xl font-bold text-red-500 mb-2 tracking-widest animate-pulse">TERMINATED</h2>
             <div className="text-gray-400 text-xl mb-8 tracking-[0.5em] uppercase">
               REASON: {gameOverReason.current}
@@ -809,15 +966,21 @@ const App: React.FC = () => {
             <div className="text-center mb-8">
               <div className="text-sm text-gray-500 tracking-widest mb-1">FINAL SCORE</div>
               <div className="text-6xl font-bold text-white glow-text">{Math.floor(score).toString().padStart(6, '0')}</div>
-              {isNewHighScore && (
-                <div className="text-yellow-400 mt-2 text-sm tracking-widest font-bold animate-pulse">NEW HIGH SCORE</div>
-              )}
-              {highScoreSaveFailed && (
-                <div className="text-red-400 mt-2 text-xs tracking-widest font-bold">LOCAL SAVE FAILED</div>
+              {saveMessage && (
+                <div className={`mt-2 text-sm tracking-widest font-bold ${saveMessage === 'SAVE FAILED' ? 'text-red-400' : 'text-emerald-400'}`}>
+                  {saveMessage}
+                </div>
               )}
             </div>
 
             <div className="flex flex-col items-center gap-6">
+              {!user && !isScoreSaved && score > 0 && (
+                <div className="mb-4">
+                  <div className="text-yellow-400 text-sm mb-2 text-center">LOGIN TO SECURE BEST SCORE</div>
+                  <AuthForm />
+                </div>
+              )}
+
               <button
                 onClick={startGame}
                 className="px-8 py-3 bg-white text-black font-bold hover:bg-gray-200 transition-colors"
@@ -826,14 +989,14 @@ const App: React.FC = () => {
               </button>
 
               <button
-                onClick={() => setGameState(GameState.MENU)}
+                onClick={returnToMenu}
                 className="px-6 py-2 border border-white/30 text-gray-300 text-sm hover:bg-white/10 hover:text-white transition-colors tracking-widest"
               >
                 RETURN TO TITLE
               </button>
 
               <div className="mt-4">
-                <HighScorePanel highScore={highScore} />
+                <Leaderboard key={isScoreSaved ? 'saved' : 'unsaved'} />
               </div>
             </div>
           </div>
@@ -843,8 +1006,20 @@ const App: React.FC = () => {
       {/* Paused Overlay */}
       {
         gameState === GameState.PAUSED && (
-          <div className="absolute inset-0 z-50 bg-black/50 flex items-center justify-center backdrop-blur-sm">
+          <div className="safe-area fixed inset-0 z-50 bg-black/70 flex flex-col gap-6 items-center justify-center backdrop-blur-sm">
             <h2 className="text-4xl font-bold text-white tracking-[0.5em]">PAUSED</h2>
+            <button
+              onClick={resumeGame}
+              className="px-8 py-3 bg-white text-black font-bold hover:bg-gray-200 transition-colors tracking-widest"
+            >
+              RESUME
+            </button>
+            <button
+              onClick={returnToMenu}
+              className="px-6 py-2 border border-white/30 text-gray-300 text-sm hover:bg-white/10 hover:text-white transition-colors tracking-widest"
+            >
+              RETURN TO TITLE
+            </button>
           </div>
         )
       }
@@ -879,7 +1054,7 @@ const App: React.FC = () => {
       {/* Help Modal */}
       {showHelpModal && (
         <div
-          className="fixed inset-0 z-[70] bg-black/85 backdrop-blur-md flex items-center justify-center p-4"
+          className="safe-area fixed inset-0 z-[70] bg-black/85 backdrop-blur-md flex items-center justify-center"
           onClick={() => closeHelpModal()}
         >
           <div
